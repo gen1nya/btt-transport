@@ -1,0 +1,21 @@
+[Unit]
+Description=BTT Transport Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/btt-server \
+    -listen 0.0.0.0:6881 \
+    -psk ${BTT_PSK} \
+    -forward-udp 127.0.0.1:51820 \
+    -transport utp \
+    -camouflage \
+    -dht
+EnvironmentFile=/etc/btt/server.env
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

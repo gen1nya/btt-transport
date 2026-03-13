@@ -1,0 +1,139 @@
+services:
+  # WireGuard server — the "exit node"
+  wg-server:
+    image: alpine:3.20
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache wireguard-tools iptables
+        # Generate keys
+        wg genkey | tee /tmp/wg-server-priv | wg pubkey > /tmp/wg-server-pub
+        cat /tmp/wg-client-pub 2>/dev/null || true
+
+        # Create config (client pubkey will be injected by entrypoint)
+        cat > /etc/wireguard/wg0.conf << WGEOF
+        [Interface]
+        Address = 10.200.0.1/24
+        ListenPort = 51820
+        PrivateKey = $(cat /tmp/wg-server-priv)
+        PostUp = iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+        [Peer]
+        PublicKey = WG_CLIENT_PUBKEY_PLACEHOLDER
+        AllowedIPs = 10.200.0.2/32
+        WGEOF
+
+        # Wait for client pubkey file
+        echo "Waiting for client pubkey..."
+        while [ ! -f /shared/client-pub ]; do sleep 0.5; done
+        sed -i "s|WG_CLIENT_PUBKEY_PLACEHOLDER|$(cat /shared/client-pub)|" /etc/wireguard/wg0.conf
+
+        # Export server pubkey
+        cp /tmp/wg-server-pub /shared/server-pub
+
+        wg-quick up wg0
+        echo "=== WG Server UP ==="
+        wg show wg0
+        # Keep alive
+        tail -f /dev/null
+    volumes:
+      - wg-shared:/shared
+    networks:
+      btt:
+        ipv4_address: 172.30.0.10
+
+  # BTT server — accepts tunnel connections, forwards UDP to WG server
+  btt-server:
+    build: .
+    command: ["-listen", "0.0.0.0:6881", "-psk", "test-psk-2026", "-forward-udp", "172.30.0.10:51820"]
+    depends_on:
+      - wg-server
+    networks:
+      btt:
+        ipv4_address: 172.30.0.11
+
+  # BTT client — connects to BTT server, exposes local UDP for WG client
+  btt-client:
+    build: .
+    entrypoint: ["btt-client"]
+    command: ["-server", "172.30.0.11:6881", "-psk", "test-psk-2026", "-mode", "udp-proxy", "-listen-udp", "0.0.0.0:51821"]
+    depends_on:
+      - btt-server
+    networks:
+      btt:
+        ipv4_address: 172.30.0.20
+
+  # WireGuard client — connects to BTT client's UDP proxy
+  wg-client:
+    image: alpine:3.20
+    cap_add:
+      - NET_ADMIN
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache wireguard-tools curl
+        # Generate keys
+        wg genkey | tee /tmp/wg-client-priv | wg pubkey > /tmp/wg-client-pub
+
+        # Export client pubkey
+        cp /tmp/wg-client-pub /shared/client-pub
+
+        # Wait for server pubkey
+        echo "Waiting for server pubkey..."
+        while [ ! -f /shared/server-pub ]; do sleep 0.5; done
+
+        # Create config — endpoint is BTT client's UDP proxy
+        cat > /etc/wireguard/wg0.conf << WGEOF
+        [Interface]
+        Address = 10.200.0.2/24
+        PrivateKey = $(cat /tmp/wg-client-priv)
+
+        [Peer]
+        PublicKey = $(cat /shared/server-pub)
+        Endpoint = 172.30.0.20:51821
+        AllowedIPs = 10.200.0.0/24
+        PersistentKeepalive = 25
+        WGEOF
+
+        sleep 3
+        wg-quick up wg0
+        echo "=== WG Client UP ==="
+        wg show wg0
+
+        echo "=== Testing tunnel ==="
+        # Ping through the tunnel
+        ping -c 5 -W 2 10.200.0.1
+        echo ""
+        echo "=== RESULT ==="
+        if ping -c 1 -W 2 10.200.0.1 > /dev/null 2>&1; then
+          echo "WireGuard through BTT tunnel: SUCCESS"
+        else
+          echo "WireGuard through BTT tunnel: FAILED"
+        fi
+
+        # Keep alive for debugging
+        sleep 30
+    volumes:
+      - wg-shared:/shared
+    depends_on:
+      - btt-client
+    networks:
+      btt:
+        ipv4_address: 172.30.0.21
+
+volumes:
+  wg-shared:
+
+networks:
+  btt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

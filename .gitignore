@@ -1,0 +1,15 @@
+# Build binaries
+/client
+/server
+/relay
+/btt-server
+/btt-client
+/btt-relay
+/bindtest
+*.exe
+*.env
+
+# Docs
+*.md
+start-btt.bat
+wg-btt.conf

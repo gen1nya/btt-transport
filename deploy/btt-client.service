@@ -1,0 +1,22 @@
+[Unit]
+Description=BTT Transport Client
+After=network-online.target
+Wants=network-online.target
+Before=wg-quick@wg-btt.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/btt-client \
+    -server ${BTT_SERVER} \
+    -psk ${BTT_PSK} \
+    -mode udp-proxy \
+    -listen-udp 127.0.0.1:51821 \
+    -transport utp \
+    -camouflage
+EnvironmentFile=/etc/btt/client.env
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

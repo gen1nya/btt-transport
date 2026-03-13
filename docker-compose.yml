@@ -1,0 +1,44 @@
+services:
+  server:
+    build: .
+    command: ["-listen", "0.0.0.0:6881", "-psk", "test-psk-2026"]
+    networks:
+      btt:
+        ipv4_address: 172.30.0.10
+
+  client-echo:
+    build: .
+    entrypoint: ["btt-client"]
+    command: ["-server", "172.30.0.10:6881", "-psk", "test-psk-2026", "-mode", "echo"]
+    depends_on:
+      - server
+    networks:
+      btt:
+        ipv4_address: 172.30.0.20
+
+  client-bench:
+    build: .
+    entrypoint: ["btt-client"]
+    command: ["-server", "172.30.0.10:6881", "-psk", "test-psk-2026", "-mode", "bench"]
+    depends_on:
+      - server
+    networks:
+      btt:
+        ipv4_address: 172.30.0.21
+
+  client-wrong-psk:
+    build: .
+    entrypoint: ["btt-client"]
+    command: ["-server", "172.30.0.10:6881", "-psk", "wrong-key-lol", "-mode", "echo"]
+    depends_on:
+      - server
+    networks:
+      btt:
+        ipv4_address: 172.30.0.22
+
+networks:
+  btt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
